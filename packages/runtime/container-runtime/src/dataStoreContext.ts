@@ -553,8 +553,6 @@ export abstract class FluidDataStoreContext extends EventEmitter implements
             summarizeInternal,
             id,
             createParam,
-            // DDS will not create failure summaries
-            { throwOnFailure: true },
         );
     }
 
@@ -615,8 +613,8 @@ export class RemotedFluidDataStoreContext extends FluidDataStoreContext {
                 const loadedSummary = await this.summarizerNode.loadBaseSummary(tree, localReadAndParse);
                 tree = loadedSummary.baseSummary;
                 // Prepend outstanding ops to pending queue of ops to process.
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                this.pending = loadedSummary.outstandingOps.concat(this.pending!);
+                assert(this.pending, "data store pending op queue should be defined when loading base summary");
+                this.pending = loadedSummary.outstandingOps.concat(this.pending);
             }
 
             if (tree !== null && tree.blobs[attributesBlobKey] !== undefined) {
