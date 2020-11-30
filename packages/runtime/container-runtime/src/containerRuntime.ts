@@ -105,7 +105,7 @@ import { ContainerFluidHandleContext } from "./containerHandleContext";
 import { FluidDataStoreRegistry } from "./dataStoreRegistry";
 import { debug } from "./debug";
 import { ISummarizerRuntime, ISummarizerInternalsProvider, Summarizer } from "./summarizer";
-import { SummaryManager } from "./summaryManager";
+import { summarizerClientType, SummaryManager } from "./summaryManager";
 import { analyzeTasks } from "./taskAnalyzer";
 import { DeltaScheduler } from "./deltaScheduler";
 import { ReportOpPerfTelemetry } from "./connectionTelemetry";
@@ -624,6 +624,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
             : DefaultSummaryConfiguration;
     }
 
+    private waitingForSummarySeq: number | undefined;
     private _disposed = false;
     public get disposed() { return this._disposed; }
 
@@ -928,8 +929,28 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
         return this.context.requestSnapshot(tagMessage);
     }
 
+    private async waitForSummary(): Promise<void> {
+        const summaryCollection = this.summarizer.summaryCollection;
+        this.waitingForSummarySeq = this.deltaManager.lastSequenceNumber;
+
+        // Prevent these clients from starting new summarizers
+        this.summaryManager.dispose();
+
+        if (this.clientDetails.type === summarizerClientType) {
+            // Prevent these summarizers from summarizing on their own
+            this.summarizer.dispose();
+
+            // Try to generate a summary manually
+            await this.generateSummary(false, false, this.logger);
+        }
+
+        await summaryCollection.waitSummaryAck(this.waitingForSummarySeq);
+    }
+
     public async stop(): Promise<IRuntimeState> {
         this.verifyNotClosed();
+
+        await this.waitForSummary();
 
         const snapshot = await this.snapshot();
         const state: IPreviousState = {
@@ -997,6 +1018,11 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
 
         // If it's not message for runtime, bail out right away.
         if (!isRuntimeMessage(messageArg)) {
+            return;
+        }
+
+        // If we are waiting for a summary do not process new ops.
+        if (this.waitingForSummarySeq !== undefined && messageArg.sequenceNumber > this.waitingForSummarySeq) {
             return;
         }
 
@@ -1340,6 +1366,10 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
         summaryLogger: ITelemetryLogger,
     ): Promise<GenerateSummaryData | undefined> {
         const summaryRefSeqNum = this.deltaManager.lastSequenceNumber;
+        if (this.waitingForSummarySeq !== undefined) {
+            // Fail any other generate summary attempts while waiting for a summary
+            assert(this.waitingForSummarySeq === summaryRefSeqNum, "expected summaryRefSeqNum == waitingForSummarySeq");
+        }
         const message =
             `Summary @${summaryRefSeqNum}:${this.deltaManager.minimumSequenceNumber}`;
 
