@@ -57,7 +57,7 @@ export interface ISummarizerInternalsProvider {
     /** Encapsulates the work to walk the internals of the running container to generate a summary */
     generateSummary(
         full: boolean,
-        safe: boolean,
+        refreshLatestAck: boolean,
         summaryLogger: ITelemetryLogger,
     ): Promise<GenerateSummaryData | undefined>;
 
@@ -550,7 +550,10 @@ export class RunningSummarizer implements IDisposable {
         // Wait for generate/send summary
         let summaryData: GenerateSummaryData | undefined;
         try {
-            summaryData = await this.internalsProvider.generateSummary(this.immediateSummary, safe, this.logger);
+            summaryData = await this.internalsProvider.generateSummary(
+                this.immediateSummary, /* fullTree - no handles */
+                safe, /* refreshLatestAck - from server */
+                this.logger);
         } catch (error) {
             summarizingEvent.cancel({ category: "error" }, error);
             return;

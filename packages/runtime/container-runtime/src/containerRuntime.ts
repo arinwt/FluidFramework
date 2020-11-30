@@ -36,6 +36,7 @@ import {
 import {
     assert,
     Deferred,
+    PromiseTimer,
     Trace,
     TypedEventEmitter,
     unreachableCase,
@@ -941,10 +942,16 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
             this.summarizer.dispose();
 
             // Try to generate a summary manually
-            await this.generateSummary(false, false, this.logger);
+            await this.generateSummary(false, true, this.logger);
         }
 
-        await summaryCollection.waitSummaryAck(this.waitingForSummarySeq);
+        const timeout = 30000; // 30 sec
+        const timer = new PromiseTimer(timeout, () => {
+            this.logger.sendTelemetryEvent({ eventName: "WaitForSummaryTimeout", timeout });
+        });
+        await Promise.race([
+            summaryCollection.waitSummaryAck(this.waitingForSummarySeq),
+            timer.start()]);
     }
 
     public async stop(): Promise<IRuntimeState> {
@@ -1362,7 +1369,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
     /** Implementation of ISummarizerInternalsProvider.generateSummary */
     public async generateSummary(
         fullTree: boolean = false,
-        safe: boolean = false,
+        refreshLatestAck: boolean = false,
         summaryLogger: ITelemetryLogger,
     ): Promise<GenerateSummaryData | undefined> {
         const summaryRefSeqNum = this.deltaManager.lastSequenceNumber;
@@ -1389,7 +1396,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
             }
 
             const trace = Trace.start();
-            const treeWithStats = await this.summarize(fullTree || safe, true /* trackState */);
+            const treeWithStats = await this.summarize(fullTree, true /* trackState */);
 
             const generateData: IGeneratedSummaryData = {
                 summaryStats: treeWithStats.stats,
@@ -1411,8 +1418,7 @@ export class ContainerRuntime extends TypedEventEmitter<IContainerRuntimeEvents>
                 treeWithStats.summary,
                 this.latestSummaryAck);
 
-            // safe mode refreshes the latest summary ack
-            if (safe) {
+            if (refreshLatestAck) {
                 const version = await this.getVersionFromStorage(this.id);
                 await this.refreshLatestSummaryAck(
                     undefined,
