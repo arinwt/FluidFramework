@@ -296,9 +296,16 @@ export class SummaryCollection {
 
     private handleSummaryAck(op: ISummaryAckMessage) {
         const seq = op.contents.summaryProposal.summarySequenceNumber;
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        const summary = this.pendingSummaries.get(seq)!;
-        assert(!!summary); // We should never see an ack without an op
+        const summary = this.pendingSummaries.get(seq);
+        if (summary === undefined) {
+            // Ack without an op should uncommon, but we can at least assert
+            // that the op sequence number < our initial sequence number.
+            // In that case we have no need to track it.
+            assert(
+                seq < this.initialSequenceNumber,
+                "expected summarySequenceNumber < initialSequenceNumber when summaryAck without op");
+            return;
+        }
         summary.ackNack(op);
         this.pendingSummaries.delete(seq);
 
